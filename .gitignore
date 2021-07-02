@@ -20,4 +20,4 @@ cli/TinyBasicPlus.cpp
 cli/tbp
 notes.txt
 .DS_Store
-
+bin/
