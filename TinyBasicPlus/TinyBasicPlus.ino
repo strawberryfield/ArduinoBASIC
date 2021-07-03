@@ -70,56 +70,21 @@ char eliminateCompileErrors = 1;  // fix to suppress arduino build errors
 #endif
 
 #include "platform.h"
+#include "globals.h"
 #include "strings.h"
 #include "keywords.h"
+#include "streamio.h"
 
-// some settings based things
+streamioClass IO;
 
-boolean inhibitOutput = false;
+static boolean inhibitOutput = false;
 static boolean runAfterLoad = false;
 static boolean triggerRun = false;
-
-// these will select, at runtime, where IO happens through for load/save
-enum {
-  kStreamSerial = 0,
-  kStreamEEProm,
-  kStreamFile
-};
-static unsigned char inStream = kStreamSerial;
-static unsigned char outStream = kStreamSerial;
-
-typedef short unsigned LINENUM;
-#ifdef ARDUINO
-#define ECHO_CHARS 1
-#else
-#define ECHO_CHARS 0
-#endif
-
 
 static unsigned char program[kRamSize];
 static unsigned char *txtpos,*list_line, *tmptxtpos;
 static unsigned char expression_error;
 static unsigned char *tempsp;
-
-
-struct stack_for_frame {
-  char frame_type;
-  char for_var;
-  short int terminal;
-  short int step;
-  unsigned char *current_line;
-  unsigned char *txtpos;
-};
-
-struct stack_gosub_frame {
-  char frame_type;
-  unsigned char *current_line;
-  unsigned char *txtpos;
-};
-
-
-#define STACK_SIZE (sizeof(struct stack_for_frame)*5)
-#define VAR_SIZE sizeof(short int) // Size of variables in bytes
 
 static unsigned char *stack_limit;
 static unsigned char *program_start;
@@ -128,17 +93,13 @@ static unsigned char *stack; // Software stack for things that should go on the 
 static unsigned char *variables_begin;
 static unsigned char *current_line;
 static unsigned char *sp;
-#define STACK_GOSUB_FLAG 'G'
-#define STACK_FOR_FLAG 'F'
+
 static unsigned char table_index;
 static LINENUM linenum;
 
-static int inchar(void);
-static void outchar(unsigned char c);
-static void line_terminator(void);
+
 static short int expression(void);
 static unsigned char breakcheck(void);
-
 
 
 /***************************************************************************/
@@ -189,63 +150,6 @@ static void scantable(const unsigned char *table)
   }
 }
 
-/***************************************************************************/
-static void pushb(unsigned char b)
-{
-  sp--;
-  *sp = b;
-}
-
-/***************************************************************************/
-static unsigned char popb()
-{
-  unsigned char b;
-  b = *sp;
-  sp++;
-  return b;
-}
-
-/***************************************************************************/
-void printnum(int num)
-{
-  int digits = 0;
-
-  if(num < 0)
-  {
-    num = -num;
-    outchar('-');
-  }
-  do {
-    pushb(num%10+'0');
-    num = num/10;
-    digits++;
-  }
-  while (num > 0);
-
-  while(digits > 0)
-  {
-    outchar(popb());
-    digits--;
-  }
-}
-
-void printUnum(unsigned int num)
-{
-  int digits = 0;
-
-  do {
-    pushb(num%10+'0');
-    num = num/10;
-    digits++;
-  }
-  while (num > 0);
-
-  while(digits > 0)
-  {
-    outchar(popb());
-    digits--;
-  }
-}
 
 /***************************************************************************/
 static unsigned short testnum(void)
@@ -269,89 +173,6 @@ static unsigned short testnum(void)
 }
 
 /***************************************************************************/
-static unsigned char print_quoted_string(void)
-{
-  int i=0;
-  unsigned char delim = *txtpos;
-  if(delim != '"' && delim != '\'')
-    return 0;
-  txtpos++;
-
-  // Check we have a closing delimiter
-  while(txtpos[i] != delim)
-  {
-    if(txtpos[i] == NL)
-      return 0;
-    i++;
-  }
-
-  // Print the characters
-  while(*txtpos != delim)
-  {
-    outchar(*txtpos);
-    txtpos++;
-  }
-  txtpos++; // Skip over the last delimiter
-
-  return 1;
-}
-
-
-/***************************************************************************/
-void printmsgNoNL(const unsigned char *msg)
-{
-  while( pgm_read_byte( msg ) != 0 ) {
-    outchar( pgm_read_byte( msg++ ) );
-  };
-}
-
-/***************************************************************************/
-void printmsg(const unsigned char *msg)
-{
-  printmsgNoNL(msg);
-  line_terminator();
-}
-
-/***************************************************************************/
-static void getln(char prompt)
-{
-  outchar(prompt);
-  txtpos = program_end+sizeof(LINENUM);
-
-  while(1)
-  {
-    char c = inchar();
-    switch(c)
-    {
-    case NL:
-      //break;
-    case CR:
-      line_terminator();
-      // Terminate all strings with a NL
-      txtpos[0] = NL;
-      return;
-    case CTRLH:
-      if(txtpos == program_end)
-        break;
-      txtpos--;
-
-      printmsg(backspacemsg);
-      break;
-    default:
-      // We need to leave at least one space to allow us to shuffle the line into order
-      if(txtpos == variables_begin-2)
-        outchar(BELL);
-      else
-      {
-        txtpos[0] = c;
-        txtpos++;
-        outchar(c);
-      }
-    }
-  }
-}
-
-/***************************************************************************/
 static unsigned char *findline(void)
 {
   unsigned char *line = program_start;
@@ -367,6 +188,7 @@ static unsigned char *findline(void)
     line += line[sizeof(LINENUM)];
   }
 }
+
 
 /***************************************************************************/
 static void toUppercaseBuffer(void)
@@ -385,31 +207,6 @@ static void toUppercaseBuffer(void)
       *c = *c + 'A' - 'a';
     c++;
   }
-}
-
-/***************************************************************************/
-void printline()
-{
-  LINENUM line_num;
-
-  line_num = *((LINENUM *)(list_line));
-  list_line += sizeof(LINENUM) + sizeof(char);
-
-  // Output the line */
-  printnum(line_num);
-  outchar(' ');
-  while(*list_line != NL)
-  {
-    outchar(*list_line);
-    list_line++;
-  }
-  list_line++;
-#ifdef ALIGN_MEMORY
-  // Start looking for next line on even page
-  if (ALIGN_UP(list_line) != list_line)
-    list_line++;
-#endif
-  line_terminator();
 }
 
 /***************************************************************************/
@@ -648,13 +445,13 @@ void loop()
 #endif
 
   // memory free
-  printnum(variables_begin-program_end);
-  printmsg(memorymsg);
+  IO.printnum(variables_begin-program_end);
+  IO.printmsg(memorymsg);
 #ifdef ARDUINO
 #ifdef ENABLE_EEPROM
   // eprom size
-  printnum( E2END+1 );
-  printmsg( eeprommsg );
+  IO.printnum( E2END+1 );
+  IO.printmsg( eeprommsg );
 #endif /* ENABLE_EEPROM */
 #endif /* ARDUINO */
 
@@ -662,7 +459,7 @@ warmstart:
   // this signifies that it is running in 'direct' mode.
   current_line = 0;
   sp = program+sizeof(program);
-  printmsg(okmsg);
+  IO.printmsg(okmsg);
 
 prompt:
   if( triggerRun ){
@@ -671,9 +468,8 @@ prompt:
     goto execline;
   }
 
-  getln( '>' );
+  IO.getln( '>' );
   toUppercaseBuffer();
-
   txtpos = program_end+sizeof(unsigned short);
 
   // Find the end of the freshly entered line
@@ -802,29 +598,29 @@ prompt:
   goto prompt;
 
 unimplemented:
-  printmsg(unimplimentedmsg);
+  IO.printmsg(unimplimentedmsg);
   goto prompt;
 
 qhow:	
-  printmsg(howmsg);
+  IO.printmsg(howmsg);
   goto prompt;
 
 qwhat:	
-  printmsgNoNL(whatmsg);
+  IO.printmsgNoNL(whatmsg);
   if(current_line != NULL)
   {
     unsigned char tmp = *txtpos;
     if(*txtpos != NL)
       *txtpos = '^';
     list_line = current_line;
-    printline();
+    IO.printline();
     *txtpos = tmp;
   }
-  line_terminator();
+  IO.line_terminator();
   goto prompt;
 
 qsorry:	
-  printmsg(sorrymsg);
+  IO.printmsg(sorrymsg);
   goto warmstart;
 
 run_next_statement:
@@ -843,7 +639,7 @@ direct:
 interperateAtTxtpos:
   if(breakcheck())
   {
-    printmsg(breakmsg);
+    IO.printmsg(breakmsg);
     goto warmstart;
   }
 
@@ -997,10 +793,10 @@ elist:
       }
 
       if( ((val < ' ') || (val  > '~')) && (val != NL) && (val != CR))  {
-        outchar( '?' );
+        IO.outchar( '?' );
       } 
       else {
-        outchar( val );
+        IO.outchar( val );
       }
     }
   }
@@ -1010,27 +806,27 @@ eformat:
   {
     for( int i = 0 ; i < E2END ; i++ )
     {
-      if( (i & 0x03f) == 0x20 ) outchar( '.' );
+      if( (i & 0x03f) == 0x20 ) IO.outchar( '.' );
       EEPROM.write( i, 0 );
     }
-    outchar( LF );
+    IO.outchar( LF );
   }
   goto execnextline;
 
 esave:
   {
-    outStream = kStreamEEProm;
+    IO.outStream = streamioClass::streamType::kStreamEEProm;
     eepos = 0;
 
     // copied from "List"
     list_line = findline();
     while(list_line != program_end) {
-      printline();
+      IO.printline();
     }
-    outchar('\0');
+    IO.outchar('\0');
 
     // go back to standard output, close the file
-    outStream = kStreamSerial;
+    IO.outStream = streamioClass::streamType::kStreamSerial;
     
     goto warmstart;
   }
@@ -1045,7 +841,7 @@ eload:
 
   // load from a file into memory
   eepos = 0;
-  inStream = kStreamEEProm;
+  IO.inStream = streamioClass::streamType::kStreamEEProm;
   inhibitOutput = true;
   goto warmstart;
 #endif /* ENABLE_EEPROM */
@@ -1065,7 +861,7 @@ input:
       goto qwhat;
 inputagain:
     tmptxtpos = txtpos;
-    getln( '?' );
+    IO.getln( '?' );
     toUppercaseBuffer();
     txtpos = program_end+sizeof(unsigned short);
     ignore_blanks();
@@ -1290,14 +1086,14 @@ list:
   // Find the line
   list_line = findline();
   while(list_line != program_end)
-    printline();
+    IO.printline();
   goto warmstart;
 
 print:
   // If we have an empty list then just put out a NL
   if(*txtpos == ':' )
   {
-    line_terminator();
+    IO.line_terminator();
     txtpos++;
     goto run_next_statement;
   }
@@ -1309,7 +1105,7 @@ print:
   while(1)
   {
     ignore_blanks();
-    if(print_quoted_string())
+    if(IO.print_quoted_string())
     {
       ;
     }
@@ -1322,7 +1118,7 @@ print:
       e = expression();
       if(expression_error)
         goto qwhat;
-      printnum(e);
+      IO.printnum(e);
     }
 
     // At this point we have three options, a comma or a new line
@@ -1335,7 +1131,7 @@ print:
     }
     else if(*txtpos == NL || *txtpos == ':')
     {
-      line_terminator();	// The end of the print statement
+      IO.line_terminator();	// The end of the print statement
       break;
     }
     else
@@ -1345,14 +1141,14 @@ print:
 
 mem:
   // memory free
-  printnum(variables_begin-program_end);
-  printmsg(memorymsg);
+  IO.printnum(variables_begin-program_end);
+  IO.printmsg(memorymsg);
 #ifdef ARDUINO
 #ifdef ENABLE_EEPROM
   {
     // eprom size
-    printnum( E2END+1 );
-    printmsg( eeprommsg );
+    IO.printnum( E2END+1 );
+    IO.printmsg( eeprommsg );
     
     // figure out the memory usage;
     val = ' ';
@@ -1360,9 +1156,9 @@ mem:
     for( i=0 ; (i<(E2END+1)) && (val != '\0') ; i++ ) {
       val = EEPROM.read( i );    
     }
-    printnum( (E2END +1) - (i-1) );
+    IO.printnum( (E2END +1) - (i-1) );
     
-    printmsg( eepromamsg );
+    IO.printmsg( eepromamsg );
   }
 #endif /* ENABLE_EEPROM */
 #endif /* ARDUINO */
@@ -1629,12 +1425,6 @@ unsigned char * filenameWord(void)
   return ret;
 }
 
-/***************************************************************************/
-static void line_terminator(void)
-{
-  outchar(NL);
-  outchar(CR);
-}
 
 /***********************************************************/
 void setup()
@@ -1643,8 +1433,7 @@ void setup()
   Serial.begin(kConsoleBaud);	// opens serial port
   while( !Serial ); // for Leonardo
   
-  // Serial.println( sentinel );
-  printmsg(initmsg);
+  IO.printmsg(initmsg);
 
 #ifdef ENABLE_FILEIO
   initSD();
@@ -1667,7 +1456,7 @@ void setup()
   int val = EEPROM.read(0);
   if( val >= '0' && val <= '9' ) {
     program_end = program_start;
-    inStream = kStreamEEProm;
+    IO.inStream = streamioClass::streamType::kStreamEEProm;
     eepos = 0;
     inhibitOutput = true;
     runAfterLoad = true;
@@ -1693,96 +1482,6 @@ static unsigned char breakcheck(void)
   else
 #endif
     return 0;
-#endif
-}
-/***********************************************************/
-static int inchar()
-{
-  int v;
-#ifdef ARDUINO
-  
-  switch( inStream ) {
-  case( kStreamFile ):
-#ifdef ENABLE_FILEIO
-    v = fp.read();
-    if( v == NL ) v=CR; // file translate
-    if( !fp.available() ) {
-      fp.close();
-      goto inchar_loadfinish;
-    }
-    return v;    
-#else
-#endif
-     break;
-  case( kStreamEEProm ):
-#ifdef ENABLE_EEPROM
-#ifdef ARDUINO
-    v = EEPROM.read( eepos++ );
-    if( v == '\0' ) {
-      goto inchar_loadfinish;
-    }
-    return v;
-#endif
-#else
-    inStream = kStreamSerial;
-    return NL;
-#endif
-     break;
-  case( kStreamSerial ):
-  default:
-    while(1)
-    {
-      if(Serial.available())
-        return Serial.read();
-    }
-  }
-  
-inchar_loadfinish:
-  inStream = kStreamSerial;
-  inhibitOutput = false;
-
-  if( runAfterLoad ) {
-    runAfterLoad = false;
-    triggerRun = true;
-  }
-  return NL; // trigger a prompt.
-  
-#else
-  // otherwise. desktop!
-  int got = getchar();
-
-  // translation for desktop systems
-  if( got == LF ) got = CR;
-
-  return got;
-#endif
-}
-
-/***********************************************************/
-static void outchar(unsigned char c)
-{
-  if( inhibitOutput ) return;
-
-#ifdef ARDUINO
-  #ifdef ENABLE_FILEIO
-    if( outStream == kStreamFile ) {
-      // output to a file
-      fp.write( c );
-    } 
-    else
-  #endif
-  #ifdef ARDUINO
-  #ifdef ENABLE_EEPROM
-    if( outStream == kStreamEEProm ) {
-      EEPROM.write( eepos++, c );
-    }
-    else 
-  #endif /* ENABLE_EEPROM */
-  #endif /* ARDUINO */
-    Serial.write(c);
-
-#else
-  putchar(c);
 #endif
 }
 

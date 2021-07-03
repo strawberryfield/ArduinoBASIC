@@ -113,20 +113,6 @@ enum {
 };
 
 
-////////////////////////////////////////////////////////////////////////////////
-// ASCII Characters
-#define CR	'\r'
-#define NL	'\n'
-#define LF      0x0a
-#define TAB	'\t'
-#define BELL	'\b'
-#define SPACE   ' '
-#define SQUOTE  '\''
-#define DQUOTE  '\"'
-#define CTRLC	0x03
-#define CTRLH	0x08
-#define CTRLS	0x13
-#define CTRLX	0x18
 
 const static unsigned char func_tab[] PROGMEM = {
   'P','E','E','K'+0x80,

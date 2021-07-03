@@ -109,7 +109,7 @@
   // EEPROM
   #ifdef ENABLE_EEPROM
     #include <EEPROM.h>  /* NOTE: case sensitive */
-    int eepos = 0;
+    static int eepos = 0;
   #endif
 
   // SD card File io
