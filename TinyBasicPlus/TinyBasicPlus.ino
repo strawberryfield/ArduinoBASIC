@@ -88,8 +88,6 @@ enum {
 static unsigned char inStream = kStreamSerial;
 static unsigned char outStream = kStreamSerial;
 
-
-
 typedef short unsigned LINENUM;
 #ifdef ARDUINO
 #define ECHO_CHARS 1
@@ -99,7 +97,6 @@ typedef short unsigned LINENUM;
 
 
 static unsigned char program[kRamSize];
-// static const char *  sentinel = "HELLO";
 static unsigned char *txtpos,*list_line, *tmptxtpos;
 static unsigned char expression_error;
 static unsigned char *tempsp;

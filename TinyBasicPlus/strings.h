@@ -35,8 +35,8 @@
 
 #define kVersion "v0.16"
 
-static const unsigned char okmsg[]            PROGMEM = "OK.";
-static const unsigned char whatmsg[]          PROGMEM = "What? ";
+static const unsigned char okmsg[]            PROGMEM = "Ok.";
+static const unsigned char whatmsg[]          PROGMEM = "Syntax error: ";
 static const unsigned char howmsg[]           PROGMEM =	"How?";
 static const unsigned char sorrymsg[]         PROGMEM = "Sorry!";
 static const unsigned char initmsg[]          PROGMEM = " ** Casasoft Arduino BASIC " kVersion " **";
@@ -48,7 +48,7 @@ static const unsigned char eepromamsg[]       PROGMEM = " EEProm bytes available
 #endif
 #endif
 static const unsigned char breakmsg[]         PROGMEM = "break!";
-static const unsigned char unimplimentedmsg[] PROGMEM = "Unimplemented";
+static const unsigned char unimplimentedmsg[] PROGMEM = "Unimplemented.";
 static const unsigned char backspacemsg[]     PROGMEM = "\b \b";
 static const unsigned char indentmsg[]        PROGMEM = "    ";
 static const unsigned char sderrormsg[]       PROGMEM = "SD card error.";
