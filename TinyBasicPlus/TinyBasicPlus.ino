@@ -6,6 +6,7 @@
 //    Gordon Brandly (Tiny Basic for 68000)
 //    Mike Field <hamster@snap.net.nz> (Arduino Basic) (port to Arduino)
 //    Scott Lawrence <yorgle@gmail.com> (TinyBasic Plus) (features, etc)
+//    Roberto Ceccarelli <strawberryfield@altervista.org> (refactoring)
 //
 // Contributors:
 //          Brian O'Dell <megamemnon@megamemnon.com> (INPUT)
@@ -53,81 +54,7 @@
 //    down the whole thing so we can get back to implementing
 //    features instead of licenses.  Thank you for your time.
 
-#define kVersion "v0.15"
 
-// v0.15: 2018-06-23
-//      Integrating some contributions
-//      Corrected some of the #ifdef nesting atop this page
-//      Licensing issues beginning to be addressed
-
-// v0.14: 2013-11-07
-//      Modified Input command to accept an expression using getn()
-//      Syntax is "input x" where x is any variable
-//      NOTE: This only works for numbers, expressions. not strings.
-//
-// v0.13: 2013-03-04
-//      Support for Arduino 1.5 (SPI.h included, additional changes for DUE support)
-//
-// v0.12: 2013-03-01
-//      EEPROM load and save routines added: EFORMAT, ELIST, ELOAD, ESAVE, ECHAIN
-//      added EAUTORUN option (chains to EEProm saved program on startup)
-//      Bugfixes to build properly on non-arduino systems (PROGMEM #define workaround)
-//      cleaned up a bit of the #define options wrt TONE
-//
-// v0.11: 2013-02-20
-//      all display strings and tables moved to PROGMEM to save space
-//      removed second serial
-//      removed pinMode completely, autoconf is explicit
-//      beginnings of EEPROM related functionality (new,load,save,list)
-//
-// v0.10: 2012-10-15
-//      added kAutoConf, which eliminates the "PINMODE" statement.
-//      now, DWRITE,DREAD,AWRITE,AREAD automatically set the PINMODE appropriately themselves.
-//      should save a few bytes in your programs.
-//
-// v0.09: 2012-10-12
-//      Fixed directory listings.  FILES now always works. (bug in the SD library)
-//      ref: http://arduino.cc/forum/index.php/topic,124739.0.html
-//      fixed filesize printouts (added printUnum for unsigned numbers)
-//      #defineable baud rate for slow connection throttling
-//e
-// v0.08: 2012-10-02
-//      Tone generation through piezo added (TONE, TONEW, NOTONE)
-//
-// v0.07: 2012-09-30
-//      Autorun buildtime configuration feature
-//
-// v0.06: 2012-09-27
-//      Added optional second serial input, used for an external keyboard
-//
-// v0.05: 2012-09-21
-//      CHAIN to load and run a second file
-//      RND,RSEED for random stuff
-//      Added "!=" for "<>" synonym
-//      Added "END" for "STOP" synonym (proper name for the functionality anyway)
-//
-// v0.04: 2012-09-20
-//      DELAY ms   - for delaying
-//      PINMODE <pin>, INPUT|IN|I|OUTPUT|OUT|O
-//      DWRITE <pin>, HIGH|HI|1|LOW|LO|0
-//      AWRITE <pin>, [0..255]
-//      fixed "save" appending to existing files instead of overwriting
-// 	Updated for building desktop command line app (incomplete)
-//
-// v0.03: 2012-09-19
-//	Integrated Jurg Wullschleger whitespace,unary fix
-//	Now available through github
-//	Project renamed from "Tiny Basic in C" to "TinyBasic Plus"
-//	   
-// v0.02b: 2012-09-17  Scott Lawrence <yorgle@gmail.com>
-// 	Better FILES listings
-//
-// v0.02a: 2012-09-17  Scott Lawrence <yorgle@gmail.com>
-// 	Support for SD Library
-// 	Added: SAVE, FILES (mostly works), LOAD (mostly works) (redirects IO)
-// 	Added: MEM, ? (PRINT)
-// 	Quirk:  "10 LET A=B+C" is ok "10 LET A = B + C" is not.
-// 	Quirk:  INPUT seems broken?
 
 // IF testing with Visual C, this needs to be the first thing in the file.
 //#include "stdafx.h"
@@ -142,183 +69,9 @@ char eliminateCompileErrors = 1;  // fix to suppress arduino build errors
 #define ARDUINO 1
 #endif
 
-
-////////////////////////////////////////////////////////////////////////////////
-// Feature option configuration...
-
-// This enables LOAD, SAVE, FILES commands through the Arduino SD Library
-// it adds 9k of usage as well.
-//#define ENABLE_FILEIO 1
-#undef ENABLE_FILEIO
-
-// this turns on "autorun".  if there's FileIO, and a file "autorun.bas",
-// then it will load it and run it when starting up
-//#define ENABLE_AUTORUN 1
-#undef ENABLE_AUTORUN
-// and this is the file that gets run
-#define kAutorunFilename  "autorun.bas"
-
-// this is the alternate autorun.  Autorun the program in the eeprom.
-// it will load whatever is in the EEProm and run it
-#define ENABLE_EAUTORUN 1
-//#undef ENABLE_EAUTORUN
-
-// this will enable the "TONE", "NOTONE" command using a piezo
-// element on the specified pin.  Wire the red/positive/piezo to the kPiezoPin,
-// and the black/negative/metal disc to ground.
-// it adds 1.5k of usage as well.
-//#define ENABLE_TONES 1
-#undef ENABLE_TONES
-#define kPiezoPin 5
-
-// we can use the EEProm to store a program during powerdown.  This is 
-// 1kbyte on the '328, and 512 bytes on the '168.  Enabling this here will
-// allow for this funcitonality to work.  Note that this only works on AVR
-// arduino.  Disable it for DUE/other devices.
-#define ENABLE_EEPROM 1
-//#undef ENABLE_EEPROM
-
-// Sometimes, we connect with a slower device as the console.
-// Set your console D0/D1 baud rate here (9600 baud default)
-#define kConsoleBaud 9600
-
-
-////////////////////////////////////////////////////////////////////////////////
-// fixes for RAMEND on some platforms
-#ifndef RAMEND
-  // RAMEND is defined for Uno type Arduinos
-  #ifdef ARDUINO
-    // probably DUE or 8266?
-    #ifdef ESP8266
-      #define RAMEND (8192-1)
-    #else
-      // probably DUE - ARM rather than AVR
-      #define RAMEND (4096-1)
-    #endif
-  #endif
-#endif
-
-
-// Enable memory alignment for certain processers (e.g. some ESP8266-based devices)
-#ifdef ESP8266
-  // Uses up to one extra byte per program line of memory
-  #define ALIGN_MEMORY 1
-#else
-  #undef ALIGN_MEMORY
-#endif
-
-#ifndef ARDUINO
-  // not an arduino, so we can disable these features.
-  // turn off EEProm
-  #undef ENABLE_EEPROM
-  #undef ENABLE_TONES
-#endif
-
-
-// includes, and settings for Arduino-specific features
-#ifdef ARDUINO
-
-  // EEPROM
-  #ifdef ENABLE_EEPROM
-    #include <EEPROM.h>  /* NOTE: case sensitive */
-    int eepos = 0;
-  #endif
-
-  // SD card File io
-  #ifdef ENABLE_FILEIO
-    #include <SD.h>
-    #include <SPI.h> /* needed as of 1.5 beta */
-
-    // set this to the card select for your Arduino SD shield
-    #define kSD_CS 10
-
-    #define kSD_Fail  0
-    #define kSD_OK    1
-
-    File fp;
-  #endif
-
-  // set up our RAM buffer size for program and user input
-  // NOTE: This number will have to change if you include other libraries.
-  //       It is also an estimation.  Might require adjustments...
-  #ifdef ENABLE_FILEIO
-    #define kRamFileIO (1030) /* approximate */
-  #else
-    #define kRamFileIO (0)
-  #endif
-
-  #ifdef ENABLE_TONES
-    #define kRamTones (40)
-  #else
-    #define kRamTones (0)
-  #endif
-
-  #define kRamSize  (RAMEND - 1160 - kRamFileIO - kRamTones) 
-
-#endif /* ARDUINO Specifics */
-
-
-// set up file includes for things we need, or desktop specific stuff.
-
-#ifdef ARDUINO
-  // Use pgmspace/PROGMEM directive to store strings in progmem to save RAM
-  #include <avr/pgmspace.h>
-#else
-  #include <stdio.h>
-  #include <stdlib.h>
-  #undef ENABLE_TONES
-
-  // size of our program ram
-  #define kRamSize   64*1024 /* arbitrary - not dependant on libraries */
-
-  #ifdef ENABLE_FILEIO
-    FILE * fp;
-  #endif
-#endif
-
-////////////////////
-
-// memory alignment
-//  necessary for some esp8266-based devices
-#ifdef ALIGN_MEMORY
-  // Align memory addess x to an even page
-  #define ALIGN_UP(x) ((unsigned char*)(((unsigned int)(x + 1) >> 1) << 1))
-  #define ALIGN_DOWN(x) ((unsigned char*)(((unsigned int)x >> 1) << 1))
-#else
-  #define ALIGN_UP(x) x
-  #define ALIGN_DOWN(x) x
-#endif
-
-
-////////////////////
-// various other desktop-tweaks and such.
-
-#ifndef boolean 
-  #define boolean int
-  #define true 1
-  #define false 0
-#endif
-
-#ifndef byte
-  typedef unsigned char byte;
-#endif
-
-// some catches for AVR based text string stuff...
-#ifndef PROGMEM
-  #define PROGMEM
-#endif
-#ifndef pgm_read_byte
-  #define pgm_read_byte( A ) *(A)
-#endif
-
-////////////////////
-
-#ifdef ENABLE_FILEIO
-  // functions defined elsehwere
-  void cmd_Files( void );
-  unsigned char * filenameWord(void);
-  static boolean sd_is_initialized = false;
-#endif
+#include "platform.h"
+#include "strings.h"
+#include "keywords.h"
 
 // some settings based things
 
@@ -336,20 +89,6 @@ static unsigned char inStream = kStreamSerial;
 static unsigned char outStream = kStreamSerial;
 
 
-////////////////////////////////////////////////////////////////////////////////
-// ASCII Characters
-#define CR	'\r'
-#define NL	'\n'
-#define LF      0x0a
-#define TAB	'\t'
-#define BELL	'\b'
-#define SPACE   ' '
-#define SQUOTE  '\''
-#define DQUOTE  '\"'
-#define CTRLC	0x03
-#define CTRLH	0x08
-#define CTRLS	0x13
-#define CTRLX	0x18
 
 typedef short unsigned LINENUM;
 #ifdef ARDUINO
@@ -360,89 +99,11 @@ typedef short unsigned LINENUM;
 
 
 static unsigned char program[kRamSize];
-static const char *  sentinel = "HELLO";
+// static const char *  sentinel = "HELLO";
 static unsigned char *txtpos,*list_line, *tmptxtpos;
 static unsigned char expression_error;
 static unsigned char *tempsp;
 
-/***********************************************************/
-// Keyword table and constants - the last character has 0x80 added to it
-const static unsigned char keywords[] PROGMEM = {
-  'L','I','S','T'+0x80,
-  'L','O','A','D'+0x80,
-  'N','E','W'+0x80,
-  'R','U','N'+0x80,
-  'S','A','V','E'+0x80,
-  'N','E','X','T'+0x80,
-  'L','E','T'+0x80,
-  'I','F'+0x80,
-  'G','O','T','O'+0x80,
-  'G','O','S','U','B'+0x80,
-  'R','E','T','U','R','N'+0x80,
-  'R','E','M'+0x80,
-  'F','O','R'+0x80,
-  'I','N','P','U','T'+0x80,
-  'P','R','I','N','T'+0x80,
-  'P','O','K','E'+0x80,
-  'S','T','O','P'+0x80,
-  'B','Y','E'+0x80,
-  'F','I','L','E','S'+0x80,
-  'M','E','M'+0x80,
-  '?'+ 0x80,
-  '\''+ 0x80,
-  'A','W','R','I','T','E'+0x80,
-  'D','W','R','I','T','E'+0x80,
-  'D','E','L','A','Y'+0x80,
-  'E','N','D'+0x80,
-  'R','S','E','E','D'+0x80,
-  'C','H','A','I','N'+0x80,
-#ifdef ENABLE_TONES
-  'T','O','N','E','W'+0x80,
-  'T','O','N','E'+0x80,
-  'N','O','T','O','N','E'+0x80,
-#endif
-#ifdef ARDUINO
-#ifdef ENABLE_EEPROM
-  'E','C','H','A','I','N'+0x80,
-  'E','L','I','S','T'+0x80,
-  'E','L','O','A','D'+0x80,
-  'E','F','O','R','M','A','T'+0x80,
-  'E','S','A','V','E'+0x80,
-#endif
-#endif
-  0
-};
-
-// by moving the command list to an enum, we can easily remove sections 
-// above and below simultaneously to selectively obliterate functionality.
-enum {
-  KW_LIST = 0,
-  KW_LOAD, KW_NEW, KW_RUN, KW_SAVE,
-  KW_NEXT, KW_LET, KW_IF,
-  KW_GOTO, KW_GOSUB, KW_RETURN,
-  KW_REM,
-  KW_FOR,
-  KW_INPUT, KW_PRINT,
-  KW_POKE,
-  KW_STOP, KW_BYE,
-  KW_FILES,
-  KW_MEM,
-  KW_QMARK, KW_QUOTE,
-  KW_AWRITE, KW_DWRITE,
-  KW_DELAY,
-  KW_END,
-  KW_RSEED,
-  KW_CHAIN,
-#ifdef ENABLE_TONES
-  KW_TONEW, KW_TONE, KW_NOTONE,
-#endif
-#ifdef ARDUINO
-#ifdef ENABLE_EEPROM
-  KW_ECHAIN, KW_ELIST, KW_ELOAD, KW_EFORMAT, KW_ESAVE, 
-#endif
-#endif
-  KW_DEFAULT /* always the final one*/
-};
 
 struct stack_for_frame {
   char frame_type;
@@ -459,60 +120,6 @@ struct stack_gosub_frame {
   unsigned char *txtpos;
 };
 
-const static unsigned char func_tab[] PROGMEM = {
-  'P','E','E','K'+0x80,
-  'A','B','S'+0x80,
-  'A','R','E','A','D'+0x80,
-  'D','R','E','A','D'+0x80,
-  'R','N','D'+0x80,
-  0
-};
-#define FUNC_PEEK    0
-#define FUNC_ABS     1
-#define FUNC_AREAD   2
-#define FUNC_DREAD   3
-#define FUNC_RND     4
-#define FUNC_UNKNOWN 5
-
-const static unsigned char to_tab[] PROGMEM = {
-  'T','O'+0x80,
-  0
-};
-
-const static unsigned char step_tab[] PROGMEM = {
-  'S','T','E','P'+0x80,
-  0
-};
-
-const static unsigned char relop_tab[] PROGMEM = {
-  '>','='+0x80,
-  '<','>'+0x80,
-  '>'+0x80,
-  '='+0x80,
-  '<','='+0x80,
-  '<'+0x80,
-  '!','='+0x80,
-  0
-};
-
-#define RELOP_GE		0
-#define RELOP_NE		1
-#define RELOP_GT		2
-#define RELOP_EQ		3
-#define RELOP_LE		4
-#define RELOP_LT		5
-#define RELOP_NE_BANG		6
-#define RELOP_UNKNOWN	7
-
-const static unsigned char highlow_tab[] PROGMEM = { 
-  'H','I','G','H'+0x80,
-  'H','I'+0x80,
-  'L','O','W'+0x80,
-  'L','O'+0x80,
-  0
-};
-#define HIGHLOW_HIGH    1
-#define HIGHLOW_UNKNOWN 4
 
 #define STACK_SIZE (sizeof(struct stack_for_frame)*5)
 #define VAR_SIZE sizeof(short int) // Size of variables in bytes
@@ -529,33 +136,14 @@ static unsigned char *sp;
 static unsigned char table_index;
 static LINENUM linenum;
 
-static const unsigned char okmsg[]            PROGMEM = "OK";
-static const unsigned char whatmsg[]          PROGMEM = "What? ";
-static const unsigned char howmsg[]           PROGMEM =	"How?";
-static const unsigned char sorrymsg[]         PROGMEM = "Sorry!";
-static const unsigned char initmsg[]          PROGMEM = "TinyBasic Plus " kVersion;
-static const unsigned char memorymsg[]        PROGMEM = " bytes free.";
-#ifdef ARDUINO
-#ifdef ENABLE_EEPROM
-static const unsigned char eeprommsg[]        PROGMEM = " EEProm bytes total.";
-static const unsigned char eepromamsg[]       PROGMEM = " EEProm bytes available.";
-#endif
-#endif
-static const unsigned char breakmsg[]         PROGMEM = "break!";
-static const unsigned char unimplimentedmsg[] PROGMEM = "Unimplemented";
-static const unsigned char backspacemsg[]     PROGMEM = "\b \b";
-static const unsigned char indentmsg[]        PROGMEM = "    ";
-static const unsigned char sderrormsg[]       PROGMEM = "SD card error.";
-static const unsigned char sdfilemsg[]        PROGMEM = "SD file error.";
-static const unsigned char dirextmsg[]        PROGMEM = "(dir)";
-static const unsigned char slashmsg[]         PROGMEM = "/";
-static const unsigned char spacemsg[]         PROGMEM = " ";
-
 static int inchar(void);
 static void outchar(unsigned char c);
 static void line_terminator(void);
 static short int expression(void);
 static unsigned char breakcheck(void);
+
+
+
 /***************************************************************************/
 static void ignore_blanks(void)
 {
@@ -2058,7 +1646,7 @@ void setup()
   Serial.begin(kConsoleBaud);	// opens serial port
   while( !Serial ); // for Leonardo
   
-  Serial.println( sentinel );
+  // Serial.println( sentinel );
   printmsg(initmsg);
 
 #ifdef ENABLE_FILEIO

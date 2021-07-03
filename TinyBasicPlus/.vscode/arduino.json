@@ -1,8 +1,9 @@
 {
     "configuration": "cpu=atmega328old",
     "board": "arduino:avr:nano",
-    "port": "COM3",
+    "port": "COM4",
     "programmer": "arduino:avrispmkii",
     "sketch": "TinyBasicPlus.ino",
-    "output": "../bin"
+    "output": "../bin",
+    "postbuild": "/projects/ArduinoBasic/script/postbuild.cmd %VSCA_SKETCH%"
 }
