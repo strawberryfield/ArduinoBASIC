@@ -68,6 +68,17 @@ public:
     void toUppercaseBuffer(void);
 
     short int expression(void);
+
+    /** execute new command */ 
+    void program_reset();
+    /** return free memory amount */
+    unsigned short free_mem();
+    /** Find the end of the freshly entered line */
+    void find_newline();
+    /** Store value in var */
+    void set_var(char var, short value);
+    /** Check if current char is not an alpha character */
+    bool isNotAlpha();
 };
 
 extern usermemClass mem;

@@ -348,3 +348,31 @@ short int usermemClass::expression(void)
     }
     return 0;
 }
+
+/**********************************************/
+
+void usermemClass::program_reset()
+{
+    program_end = program_start;
+}
+
+unsigned short usermemClass::free_mem()
+{
+    return variables_begin - program_end;
+}
+
+void usermemClass::find_newline()
+{
+    while (*txtpos != NL)
+        txtpos++;
+}
+
+void usermemClass::set_var(char var, short value)
+{
+    ((short int *)variables_begin)[var - 'A'] = value;
+}
+
+bool usermemClass::isNotAlpha()
+{
+    return (*txtpos < 'A' || *txtpos > 'Z');
+}

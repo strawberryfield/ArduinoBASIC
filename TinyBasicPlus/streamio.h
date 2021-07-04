@@ -33,6 +33,7 @@
 #include "Arduino.h"
 #include "globals.h"
 #include "strings.h"
+#include "usermem.h"
 
 class streamioClass
 {
@@ -62,6 +63,8 @@ public:
     void line_terminator(void);
     int inchar();
     void outchar(unsigned char c);
+    /** trap non printable chars */
+    void outchar_printable(unsigned char c);
     unsigned char breakcheck(void);
 };
 
