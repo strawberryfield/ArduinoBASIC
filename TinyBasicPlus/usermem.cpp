@@ -206,6 +206,13 @@ short int usermemClass::expr4(void)
                 return -a;
             return a;
 
+        case FUNC_SGN:
+            if (a < 0)
+                return -1;
+            else if (a > 0)
+                return 1;
+            return a;
+
 #ifdef ARDUINO
         case FUNC_AREAD:
             pinMode(a, INPUT);

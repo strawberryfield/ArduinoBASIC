@@ -120,14 +120,19 @@ const static unsigned char func_tab[] PROGMEM = {
   'A','R','E','A','D'+0x80,
   'D','R','E','A','D'+0x80,
   'R','N','D'+0x80,
+  'S','G','N'+0x80,
   0
 };
-#define FUNC_PEEK    0
-#define FUNC_ABS     1
-#define FUNC_AREAD   2
-#define FUNC_DREAD   3
-#define FUNC_RND     4
-#define FUNC_UNKNOWN 5
+
+enum {
+    FUNC_PEEK =0   ,
+    FUNC_ABS     ,
+    FUNC_AREAD   ,
+    FUNC_DREAD   ,
+    FUNC_RND     ,
+    FUNC_SGN     ,
+    FUNC_UNKNOWN 
+};
 
 const static unsigned char to_tab[] PROGMEM = {
   'T','O'+0x80,
