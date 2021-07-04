@@ -1,5 +1,5 @@
 /// @file
-/// Tiny basic plus globals.
+/// User memory area manager definition.
 ///
 /// @author
 /// copyright (c) 2021 Roberto Ceccarelli - Casasoft
@@ -27,60 +27,47 @@
 /// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 /// See the GNU General Public License for more details.
 
-#ifndef _GLOBALS_H_
-#define _GLOBALS_H_
+#ifndef _USERMEM_H_
+#define _USERMEM_H_
 
+#include "Arduino.h"
 #include "platform.h"
+#include "keywords.h"
+#include "globals.h"
 
-// some settings based things
-extern boolean inhibitOutput;
-extern boolean runAfterLoad;
-extern boolean triggerRun;
+typedef short unsigned LINENUM;
 
+class usermemClass
+{
+public:
+    unsigned char program[kRamSize];
+    unsigned char *txtpos, *list_line, *tmptxtpos;
+    unsigned char expression_error;
+    unsigned char *tempsp;
 
-#ifdef ARDUINO
-#define ECHO_CHARS 1
-#else
-#define ECHO_CHARS 0
-#endif
+    unsigned char *stack_limit;
+    unsigned char *program_start;
+    unsigned char *program_end;
+    unsigned char *stack; // Software stack for things that should go on the CPU stack
+    unsigned char *variables_begin;
+    unsigned char *current_line;
+    unsigned char *sp;
 
+    unsigned char table_index;
+    LINENUM linenum;
 
+    void ignore_blanks(void);
+    void scantable(const unsigned char *table);
+    unsigned short testnum(void);
+    unsigned char *findline(void);
+    void toUppercaseBuffer(void);
 
-struct stack_for_frame {
-  char frame_type;
-  char for_var;
-  short int terminal;
-  short int step;
-  unsigned char *current_line;
-  unsigned char *txtpos;
+    short int expr4(void);
+    short int expr3(void);
+    short int expr2(void);
+    short int expression(void);
 };
 
-struct stack_gosub_frame {
-  char frame_type;
-  unsigned char *current_line;
-  unsigned char *txtpos;
-};
-
-#define STACK_GOSUB_FLAG 'G'
-#define STACK_FOR_FLAG 'F'
-
-#define STACK_SIZE (sizeof(struct stack_for_frame)*5)
-#define VAR_SIZE sizeof(short int) // Size of variables in bytes
-
-
-////////////////////////////////////////////////////////////////////////////////
-// ASCII Characters
-#define CR	'\r'
-#define NL	'\n'
-#define LF      0x0a
-#define TAB	'\t'
-#define BELL	'\b'
-#define SPACE   ' '
-#define SQUOTE  '\''
-#define DQUOTE  '\"'
-#define CTRLC	0x03
-#define CTRLH	0x08
-#define CTRLS	0x13
-#define CTRLX	0x18
+extern usermemClass mem;
 
 #endif

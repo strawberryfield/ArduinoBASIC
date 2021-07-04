@@ -74,347 +74,17 @@ char eliminateCompileErrors = 1;  // fix to suppress arduino build errors
 #include "strings.h"
 #include "keywords.h"
 #include "streamio.h"
+#include "usermem.h"
 
 streamioClass IO;
+usermemClass mem;
 
 static boolean inhibitOutput = false;
 static boolean runAfterLoad = false;
 static boolean triggerRun = false;
 
-static unsigned char program[kRamSize];
-static unsigned char *txtpos,*list_line, *tmptxtpos;
-static unsigned char expression_error;
-static unsigned char *tempsp;
-
-static unsigned char *stack_limit;
-static unsigned char *program_start;
-static unsigned char *program_end;
-static unsigned char *stack; // Software stack for things that should go on the CPU stack
-static unsigned char *variables_begin;
-static unsigned char *current_line;
-static unsigned char *sp;
-
-static unsigned char table_index;
-static LINENUM linenum;
-
-
-static short int expression(void);
 static unsigned char breakcheck(void);
-
-
 /***************************************************************************/
-static void ignore_blanks(void)
-{
-  while(*txtpos == SPACE || *txtpos == TAB)
-    txtpos++;
-}
-
-
-/***************************************************************************/
-static void scantable(const unsigned char *table)
-{
-  int i = 0;
-  table_index = 0;
-  while(1)
-  {
-    // Run out of table entries?
-    if(pgm_read_byte( table ) == 0)
-      return;
-
-    // Do we match this character?
-    if(txtpos[i] == pgm_read_byte( table ))
-    {
-      i++;
-      table++;
-    }
-    else
-    {
-      // do we match the last character of keywork (with 0x80 added)? If so, return
-      if(txtpos[i]+0x80 == pgm_read_byte( table ))
-      {
-        txtpos += i+1;  // Advance the pointer to following the keyword
-        ignore_blanks();
-        return;
-      }
-
-      // Forward to the end of this keyword
-      while((pgm_read_byte( table ) & 0x80) == 0)
-        table++;
-
-      // Now move on to the first character of the next word, and reset the position index
-      table++;
-      table_index++;
-      ignore_blanks();
-      i = 0;
-    }
-  }
-}
-
-
-/***************************************************************************/
-static unsigned short testnum(void)
-{
-  unsigned short num = 0;
-  ignore_blanks();
-
-  while(*txtpos>= '0' && *txtpos <= '9' )
-  {
-    // Trap overflows
-    if(num >= 0xFFFF/10)
-    {
-      num = 0xFFFF;
-      break;
-    }
-
-    num = num *10 + *txtpos - '0';
-    txtpos++;
-  }
-  return	num;
-}
-
-/***************************************************************************/
-static unsigned char *findline(void)
-{
-  unsigned char *line = program_start;
-  while(1)
-  {
-    if(line == program_end)
-      return line;
-
-    if(((LINENUM *)line)[0] >= linenum)
-      return line;
-
-    // Add the line length onto the current address, to get to the next line;
-    line += line[sizeof(LINENUM)];
-  }
-}
-
-
-/***************************************************************************/
-static void toUppercaseBuffer(void)
-{
-  unsigned char *c = program_end+sizeof(LINENUM);
-  unsigned char quote = 0;
-
-  while(*c != NL)
-  {
-    // Are we in a quoted string?
-    if(*c == quote)
-      quote = 0;
-    else if(*c == '"' || *c == '\'')
-      quote = *c;
-    else if(quote == 0 && *c >= 'a' && *c <= 'z')
-      *c = *c + 'A' - 'a';
-    c++;
-  }
-}
-
-/***************************************************************************/
-static short int expr4(void)
-{
-  // fix provided by Jurg Wullschleger wullschleger@gmail.com
-  // fixes whitespace and unary operations
-  ignore_blanks();
-
-  if( *txtpos == '-' ) {
-    txtpos++;
-    return -expr4();
-  }
-  // end fix
-
-  if(*txtpos == '0')
-  {
-    txtpos++;
-    return 0;
-  }
-
-  if(*txtpos >= '1' && *txtpos <= '9')
-  {
-    short int a = 0;
-    do 	{
-      a = a*10 + *txtpos - '0';
-      txtpos++;
-    } 
-    while(*txtpos >= '0' && *txtpos <= '9');
-    return a;
-  }
-
-  // Is it a function or variable reference?
-  if(txtpos[0] >= 'A' && txtpos[0] <= 'Z')
-  {
-    short int a;
-    // Is it a variable reference (single alpha)
-    if(txtpos[1] < 'A' || txtpos[1] > 'Z')
-    {
-      a = ((short int *)variables_begin)[*txtpos - 'A'];
-      txtpos++;
-      return a;
-    }
-
-    // Is it a function with a single parameter
-    scantable(func_tab);
-    if(table_index == FUNC_UNKNOWN)
-      goto expr4_error;
-
-    unsigned char f = table_index;
-
-    if(*txtpos != '(')
-      goto expr4_error;
-
-    txtpos++;
-    a = expression();
-    if(*txtpos != ')')
-      goto expr4_error;
-    txtpos++;
-    switch(f)
-    {
-    case FUNC_PEEK:
-      return program[a];
-      
-    case FUNC_ABS:
-      if(a < 0) 
-        return -a;
-      return a;
-
-#ifdef ARDUINO
-    case FUNC_AREAD:
-      pinMode( a, INPUT );
-      return analogRead( a );                        
-    case FUNC_DREAD:
-      pinMode( a, INPUT );
-      return digitalRead( a );
-#endif
-
-    case FUNC_RND:
-#ifdef ARDUINO
-      return( random( a ));
-#else
-      return( rand() % a );
-#endif
-    }
-  }
-
-  if(*txtpos == '(')
-  {
-    short int a;
-    txtpos++;
-    a = expression();
-    if(*txtpos != ')')
-      goto expr4_error;
-
-    txtpos++;
-    return a;
-  }
-
-expr4_error:
-  expression_error = 1;
-  return 0;
-
-}
-
-/***************************************************************************/
-static short int expr3(void)
-{
-  short int a,b;
-
-  a = expr4();
-
-  ignore_blanks(); // fix for eg:  100 a = a + 1
-
-  while(1)
-  {
-    if(*txtpos == '*')
-    {
-      txtpos++;
-      b = expr4();
-      a *= b;
-    }
-    else if(*txtpos == '/')
-    {
-      txtpos++;
-      b = expr4();
-      if(b != 0)
-        a /= b;
-      else
-        expression_error = 1;
-    }
-    else
-      return a;
-  }
-}
-
-/***************************************************************************/
-static short int expr2(void)
-{
-  short int a,b;
-
-  if(*txtpos == '-' || *txtpos == '+')
-    a = 0;
-  else
-    a = expr3();
-
-  while(1)
-  {
-    if(*txtpos == '-')
-    {
-      txtpos++;
-      b = expr3();
-      a -= b;
-    }
-    else if(*txtpos == '+')
-    {
-      txtpos++;
-      b = expr3();
-      a += b;
-    }
-    else
-      return a;
-  }
-}
-/***************************************************************************/
-static short int expression(void)
-{
-  short int a,b;
-
-  a = expr2();
-
-  // Check if we have an error
-  if(expression_error)	return a;
-
-  scantable(relop_tab);
-  if(table_index == RELOP_UNKNOWN)
-    return a;
-
-  switch(table_index)
-  {
-  case RELOP_GE:
-    b = expr2();
-    if(a >= b) return 1;
-    break;
-  case RELOP_NE:
-  case RELOP_NE_BANG:
-    b = expr2();
-    if(a != b) return 1;
-    break;
-  case RELOP_GT:
-    b = expr2();
-    if(a > b) return 1;
-    break;
-  case RELOP_EQ:
-    b = expr2();
-    if(a == b) return 1;
-    break;
-  case RELOP_LE:
-    b = expr2();
-    if(a <= b) return 1;
-    break;
-  case RELOP_LT:
-    b = expr2();
-    if(a < b) return 1;
-    break;
-  }
-  return 0;
-}
 
 /***************************************************************************/
 void loop()
@@ -432,20 +102,20 @@ void loop()
 #endif
 #endif
 
-  program_start = program;
-  program_end = program_start;
-  sp = program+sizeof(program);  // Needed for printnum
+  mem.program_start = mem.program;
+  mem.program_end = mem.program_start;
+  mem.sp = mem.program+sizeof(mem.program);  // Needed for printnum
 #ifdef ALIGN_MEMORY
   // Ensure these memory blocks start on even pages
-  stack_limit = ALIGN_DOWN(program+sizeof(program)-STACK_SIZE);
-  variables_begin = ALIGN_DOWN(stack_limit - 27*VAR_SIZE);
+  mem.stack_limit = ALIGN_DOWN(mem.program+sizeof(mem.program)-STACK_SIZE);
+  mem.variables_begin = ALIGN_DOWN(mem.stack_limit - 27*VAR_SIZE);
 #else
-  stack_limit = program+sizeof(program)-STACK_SIZE;
-  variables_begin = stack_limit - 27*VAR_SIZE;
+  mem.stack_limit = mem.program+sizeof(mem.program)-STACK_SIZE;
+  mem.variables_begin = mem.stack_limit - 27*VAR_SIZE;
 #endif
 
   // memory free
-  IO.printnum(variables_begin-program_end);
+  IO.printnum(mem.variables_begin-mem.program_end);
   IO.printmsg(memorymsg);
 #ifdef ARDUINO
 #ifdef ENABLE_EEPROM
@@ -457,69 +127,69 @@ void loop()
 
 warmstart:
   // this signifies that it is running in 'direct' mode.
-  current_line = 0;
-  sp = program+sizeof(program);
+  mem.current_line = 0;
+  mem.sp = mem.program+sizeof(mem.program);
   IO.printmsg(okmsg);
 
 prompt:
   if( triggerRun ){
     triggerRun = false;
-    current_line = program_start;
+    mem.current_line = mem.program_start;
     goto execline;
   }
 
   IO.getln( '>' );
-  toUppercaseBuffer();
-  txtpos = program_end+sizeof(unsigned short);
+  mem.toUppercaseBuffer();
+  mem.txtpos = mem.program_end+sizeof(unsigned short);
 
   // Find the end of the freshly entered line
-  while(*txtpos != NL)
-    txtpos++;
+  while(*mem.txtpos != NL)
+    mem.txtpos++;
 
   // Move it to the end of program_memory
   {
     unsigned char *dest;
-    dest = variables_begin-1;
+    dest = mem.variables_begin-1;
     while(1)
     {
-      *dest = *txtpos;
-      if(txtpos == program_end+sizeof(unsigned short))
+      *dest = *mem.txtpos;
+      if(mem.txtpos == mem.program_end+sizeof(unsigned short))
         break;
       dest--;
-      txtpos--;
+      mem.txtpos--;
     }
-    txtpos = dest;
+    mem.txtpos = dest;
   }
 
   // Now see if we have a line number
-  linenum = testnum();
-  ignore_blanks();
-  if(linenum == 0)
+  mem.linenum = mem.testnum();
+  mem.ignore_blanks();
+  if(mem.linenum == 0)
     goto direct;
 
-  if(linenum == 0xFFFF)
+  if(mem.linenum == 0xFFFF)
     goto qhow;
 
   // Find the length of what is left, including the (yet-to-be-populated) line header
   linelen = 0;
-  while(txtpos[linelen] != NL)
+  while(mem.txtpos[linelen] != NL)
     linelen++;
   linelen++; // Include the NL in the line length
   linelen += sizeof(unsigned short)+sizeof(char); // Add space for the line number and line length
 
   // Now we have the number, add the line header.
-  txtpos -= 3;
+  mem.txtpos -= 3;
 
 #ifdef ALIGN_MEMORY
   // Line starts should always be on 16-bit pages
-  if (ALIGN_DOWN(txtpos) != txtpos)
+  if (ALIGN_DOWN(mem.txtpos) != mem.txtpos)
   {
-    txtpos--;
+    mem.txtpos--;
     linelen++;
     // As the start of the line has moved, the data should move as well
     unsigned char *tomove;
-    tomove = txtpos + 3;
-    while (tomove < txtpos + linelen - 1)
+    tomove = mem.txtpos + 3;
+    while (tomove < mem.txtpos + linelen - 1)
     {
       *tomove = *(tomove + 1);
       tomove++;
@@ -527,15 +197,15 @@ prompt:
   }
 #endif
 
-  *((unsigned short *)txtpos) = linenum;
-  txtpos[sizeof(LINENUM)] = linelen;
+  *((unsigned short *)mem.txtpos) = mem.linenum;
+  mem.txtpos[sizeof(LINENUM)] = linelen;
 
 
   // Merge it into the rest of the program
-  start = findline();
+  start = mem.findline();
 
   // If a line with that number exists, then remove it
-  if(start != program_end && *((LINENUM *)start) == linenum)
+  if(start != mem.program_end && *((LINENUM *)start) == mem.linenum)
   {
     unsigned char *dest, *from;
     unsigned tomove;
@@ -543,7 +213,7 @@ prompt:
     from = start + start[sizeof(LINENUM)];
     dest = start;
 
-    tomove = program_end - from;
+    tomove = mem.program_end - from;
     while( tomove > 0)
     {
       *dest = *from;
@@ -551,10 +221,10 @@ prompt:
       dest++;
       tomove--;
     }	
-    program_end = dest;
+    mem.program_end = dest;
   }
 
-  if(txtpos[sizeof(LINENUM)+sizeof(char)] == NL) // If the line has no txt, it was just a delete
+  if(mem.txtpos[sizeof(LINENUM)+sizeof(char)] == NL) // If the line has no txt, it was just a delete
     goto prompt;
 
 
@@ -566,16 +236,16 @@ prompt:
     unsigned char *from,*dest;
     unsigned int space_to_make;
 
-    space_to_make = txtpos - program_end;
+    space_to_make = mem.txtpos - mem.program_end;
 
     if(space_to_make > linelen)
       space_to_make = linelen;
-    newEnd = program_end+space_to_make;
-    tomove = program_end - start;
+    newEnd = mem.program_end+space_to_make;
+    tomove = mem.program_end - start;
 
 
     // Source and destination - as these areas may overlap we need to move bottom up
-    from = program_end;
+    from = mem.program_end;
     dest = newEnd;
     while(tomove > 0)
     {
@@ -588,12 +258,12 @@ prompt:
     // Copy over the bytes into the new space
     for(tomove = 0; tomove < space_to_make; tomove++)
     {
-      *start = *txtpos;
-      txtpos++;
+      *start = *mem.txtpos;
+      mem.txtpos++;
       start++;
       linelen--;
     }
-    program_end = newEnd;
+    mem.program_end = newEnd;
   }
   goto prompt;
 
@@ -607,14 +277,14 @@ qhow:
 
 qwhat:	
   IO.printmsgNoNL(whatmsg);
-  if(current_line != NULL)
+  if(mem.current_line != NULL)
   {
-    unsigned char tmp = *txtpos;
-    if(*txtpos != NL)
-      *txtpos = '^';
-    list_line = current_line;
+    unsigned char tmp = *mem.txtpos;
+    if(*mem.txtpos != NL)
+      *mem.txtpos = '^';
+    mem.list_line = mem.current_line;
     IO.printline();
-    *txtpos = tmp;
+    *mem.txtpos = tmp;
   }
   IO.line_terminator();
   goto prompt;
@@ -624,16 +294,16 @@ qsorry:
   goto warmstart;
 
 run_next_statement:
-  while(*txtpos == ':')
-    txtpos++;
-  ignore_blanks();
-  if(*txtpos == NL)
+  while(*mem.txtpos == ':')
+   mem.txtpos++;
+  mem.ignore_blanks();
+  if(*mem.txtpos == NL)
     goto execnextline;
   goto interperateAtTxtpos;
 
 direct: 
-  txtpos = program_end+sizeof(LINENUM);
-  if(*txtpos == NL)
+  mem.txtpos = mem.program_end+sizeof(LINENUM);
+  if(*mem.txtpos == NL)
     goto prompt;
 
 interperateAtTxtpos:
@@ -643,15 +313,15 @@ interperateAtTxtpos:
     goto warmstart;
   }
 
-  scantable(keywords);
+  mem.scantable(keywords);
 
-  switch(table_index)
+  switch(mem.table_index)
   {
   case KW_DELAY:
     {
 #ifdef ARDUINO
-      expression_error = 0;
-      val = expression();
+      mem.expression_error = 0;
+      val = mem.expression();
       delay( val );
       goto execnextline;
 #else
@@ -670,12 +340,12 @@ interperateAtTxtpos:
   case KW_MEM:
     goto mem;
   case KW_NEW:
-    if(txtpos[0] != NL)
+    if(mem.txtpos[0] != NL)
       goto qwhat;
-    program_end = program_start;
+    mem.program_end = mem.program_start;
     goto prompt;
   case KW_RUN:
-    current_line = program_start;
+    mem.current_line = mem.program_start;
     goto execline;
   case KW_SAVE:
     goto save;
@@ -685,20 +355,20 @@ interperateAtTxtpos:
     goto assignment;
   case KW_IF:
     short int val;
-    expression_error = 0;
-    val = expression();
-    if(expression_error || *txtpos == NL)
+    mem.expression_error = 0;
+    val = mem.expression();
+    if(mem.expression_error || *mem.txtpos == NL)
       goto qhow;
     if(val != 0)
       goto interperateAtTxtpos;
     goto execnextline;
 
   case KW_GOTO:
-    expression_error = 0;
-    linenum = expression();
-    if(expression_error || *txtpos != NL)
+    mem.expression_error = 0;
+    mem.linenum = mem.expression();
+    if(mem.expression_error || *mem.txtpos != NL)
       goto qhow;
-    current_line = findline();
+    mem.current_line = mem.findline();
     goto execline;
 
   case KW_GOSUB:
@@ -720,9 +390,9 @@ interperateAtTxtpos:
   case KW_END:
   case KW_STOP:
     // This is the easy way to end - set the current line to the end of program attempt to run it
-    if(txtpos[0] != NL)
+    if(mem.txtpos[0] != NL)
       goto qwhat;
-    current_line = program_end;
+    mem.current_line = mem.program_end;
     goto execline;
   case KW_BYE:
     // Leave the basic interperater
@@ -769,14 +439,14 @@ interperateAtTxtpos:
   }
 
 execnextline:
-  if(current_line == NULL)		// Processing direct commands?
+  if(mem.current_line == NULL)		// Processing direct commands?
     goto prompt;
-  current_line +=	 current_line[sizeof(LINENUM)];
+  mem.current_line +=	 mem.current_line[sizeof(LINENUM)];
 
 execline:
-  if(current_line == program_end) // Out of lines to run
+  if(mem.current_line == mem.program_end) // Out of lines to run
     goto warmstart;
-  txtpos = current_line+sizeof(LINENUM)+sizeof(char);
+  mem.txtpos = mem.current_line+sizeof(LINENUM)+sizeof(char);
   goto interperateAtTxtpos;
 
 #ifdef ARDUINO
@@ -819,8 +489,8 @@ esave:
     eepos = 0;
 
     // copied from "List"
-    list_line = findline();
-    while(list_line != program_end) {
+    mem.list_line = mem.findline();
+    while(mem.list_line != mem.program_end) {
       IO.printline();
     }
     IO.outchar('\0');
@@ -837,7 +507,7 @@ echain:
 
 eload:
   // clear the program
-  program_end = program_start;
+  mem.program_end = mem.program_start;
 
   // load from a file into memory
   eepos = 0;
@@ -851,26 +521,26 @@ input:
   {
     unsigned char var;
     int value;
-    ignore_blanks();
-    if(*txtpos < 'A' || *txtpos > 'Z')
+    mem.ignore_blanks();
+    if(*mem.txtpos < 'A' || *mem.txtpos > 'Z')
       goto qwhat;
-    var = *txtpos;
-    txtpos++;
-    ignore_blanks();
-    if(*txtpos != NL && *txtpos != ':')
+    var = *mem.txtpos;
+    mem.txtpos++;
+    mem.ignore_blanks();
+    if(*mem.txtpos != NL && *mem.txtpos != ':')
       goto qwhat;
 inputagain:
-    tmptxtpos = txtpos;
+    mem.tmptxtpos = mem.txtpos;
     IO.getln( '?' );
-    toUppercaseBuffer();
-    txtpos = program_end+sizeof(unsigned short);
-    ignore_blanks();
-    expression_error = 0;
-    value = expression();
-    if(expression_error)
+    mem.toUppercaseBuffer();
+    mem.txtpos = mem.program_end+sizeof(unsigned short);
+    mem.ignore_blanks();
+    mem.expression_error = 0;
+    value = mem.expression();
+    if(mem.expression_error)
       goto inputagain;
-    ((short int *)variables_begin)[var-'A'] = value;
-    txtpos = tmptxtpos;
+    ((short int *)mem.variables_begin)[var-'A'] = value;
+    mem.txtpos = mem.tmptxtpos;
 
     goto run_next_statement;
   }
@@ -879,137 +549,137 @@ forloop:
   {
     unsigned char var;
     short int initial, step, terminal;
-    ignore_blanks();
-    if(*txtpos < 'A' || *txtpos > 'Z')
+    mem.ignore_blanks();
+    if(*mem.txtpos < 'A' || *mem.txtpos > 'Z')
       goto qwhat;
-    var = *txtpos;
-    txtpos++;
-    ignore_blanks();
-    if(*txtpos != '=')
+    var = *mem.txtpos;
+    mem.txtpos++;
+    mem.ignore_blanks();
+    if(*mem.txtpos != '=')
       goto qwhat;
-    txtpos++;
-    ignore_blanks();
+    mem.txtpos++;
+    mem.ignore_blanks();
 
-    expression_error = 0;
-    initial = expression();
-    if(expression_error)
-      goto qwhat;
-
-    scantable(to_tab);
-    if(table_index != 0)
+    mem.expression_error = 0;
+    initial = mem.expression();
+    if(mem.expression_error)
       goto qwhat;
 
-    terminal = expression();
-    if(expression_error)
+    mem.scantable(to_tab);
+    if(mem.table_index != 0)
       goto qwhat;
 
-    scantable(step_tab);
-    if(table_index == 0)
+    terminal = mem.expression();
+    if(mem.expression_error)
+      goto qwhat;
+
+    mem.scantable(step_tab);
+    if(mem.table_index == 0)
     {
-      step = expression();
-      if(expression_error)
+      step = mem.expression();
+      if(mem.expression_error)
         goto qwhat;
     }
     else
       step = 1;
-    ignore_blanks();
-    if(*txtpos != NL && *txtpos != ':')
+    mem.ignore_blanks();
+    if(*mem.txtpos != NL && *mem.txtpos != ':')
       goto qwhat;
 
 
-    if(!expression_error && *txtpos == NL)
+    if(!mem.expression_error && *mem.txtpos == NL)
     {
       struct stack_for_frame *f;
-      if(sp + sizeof(struct stack_for_frame) < stack_limit)
+      if(mem.sp + sizeof(struct stack_for_frame) < mem.stack_limit)
         goto qsorry;
 
-      sp -= sizeof(struct stack_for_frame);
-      f = (struct stack_for_frame *)sp;
-      ((short int *)variables_begin)[var-'A'] = initial;
+      mem.sp -= sizeof(struct stack_for_frame);
+      f = (struct stack_for_frame *)mem.sp;
+      ((short int *)mem.variables_begin)[var-'A'] = initial;
       f->frame_type = STACK_FOR_FLAG;
       f->for_var = var;
       f->terminal = terminal;
       f->step     = step;
-      f->txtpos   = txtpos;
-      f->current_line = current_line;
+      f->txtpos   = mem.txtpos;
+      f->current_line = mem.current_line;
       goto run_next_statement;
     }
   }
   goto qhow;
 
 gosub:
-  expression_error = 0;
-  linenum = expression();
-  if(!expression_error && *txtpos == NL)
+  mem.expression_error = 0;
+  mem.linenum = mem.expression();
+  if(!mem.expression_error && *mem.txtpos == NL)
   {
     struct stack_gosub_frame *f;
-    if(sp + sizeof(struct stack_gosub_frame) < stack_limit)
+    if(mem.sp + sizeof(struct stack_gosub_frame) < mem.stack_limit)
       goto qsorry;
 
-    sp -= sizeof(struct stack_gosub_frame);
-    f = (struct stack_gosub_frame *)sp;
+    mem.sp -= sizeof(struct stack_gosub_frame);
+    f = (struct stack_gosub_frame *)mem.sp;
     f->frame_type = STACK_GOSUB_FLAG;
-    f->txtpos = txtpos;
-    f->current_line = current_line;
-    current_line = findline();
+    f->txtpos = mem.txtpos;
+    f->current_line = mem.current_line;
+    mem.current_line = mem.findline();
     goto execline;
   }
   goto qhow;
 
 next:
   // Fnd the variable name
-  ignore_blanks();
-  if(*txtpos < 'A' || *txtpos > 'Z')
+  mem.ignore_blanks();
+  if(*mem.txtpos < 'A' || *mem.txtpos > 'Z')
     goto qhow;
-  txtpos++;
-  ignore_blanks();
-  if(*txtpos != ':' && *txtpos != NL)
+  mem.txtpos++;
+  mem.ignore_blanks();
+  if(*mem.txtpos != ':' && *mem.txtpos != NL)
     goto qwhat;
 
 gosub_return:
   // Now walk up the stack frames and find the frame we want, if present
-  tempsp = sp;
-  while(tempsp < program+sizeof(program)-1)
+  mem.tempsp = mem.sp;
+  while(mem.tempsp < mem.program+sizeof(mem.program)-1)
   {
-    switch(tempsp[0])
+    switch(mem.tempsp[0])
     {
     case STACK_GOSUB_FLAG:
-      if(table_index == KW_RETURN)
+      if(mem.table_index == KW_RETURN)
       {
-        struct stack_gosub_frame *f = (struct stack_gosub_frame *)tempsp;
-        current_line	= f->current_line;
-        txtpos			= f->txtpos;
-        sp += sizeof(struct stack_gosub_frame);
+        struct stack_gosub_frame *f = (struct stack_gosub_frame *)mem.tempsp;
+        mem.current_line	= f->current_line;
+        mem.txtpos			= f->txtpos;
+        mem.sp += sizeof(struct stack_gosub_frame);
         goto run_next_statement;
       }
       // This is not the loop you are looking for... so Walk back up the stack
-      tempsp += sizeof(struct stack_gosub_frame);
+      mem.tempsp += sizeof(struct stack_gosub_frame);
       break;
     case STACK_FOR_FLAG:
       // Flag, Var, Final, Step
-      if(table_index == KW_NEXT)
+      if(mem.table_index == KW_NEXT)
       {
-        struct stack_for_frame *f = (struct stack_for_frame *)tempsp;
+        struct stack_for_frame *f = (struct stack_for_frame *)mem.tempsp;
         // Is the the variable we are looking for?
-        if(txtpos[-1] == f->for_var)
+        if(mem.txtpos[-1] == f->for_var)
         {
-          short int *varaddr = ((short int *)variables_begin) + txtpos[-1] - 'A'; 
+          short int *varaddr = ((short int *)mem.variables_begin) + mem.txtpos[-1] - 'A'; 
           *varaddr = *varaddr + f->step;
           // Use a different test depending on the sign of the step increment
           if((f->step > 0 && *varaddr <= f->terminal) || (f->step < 0 && *varaddr >= f->terminal))
           {
             // We have to loop so don't pop the stack
-            txtpos = f->txtpos;
-            current_line = f->current_line;
+            mem.txtpos = f->txtpos;
+            mem.current_line = f->current_line;
             goto run_next_statement;
           }
           // We've run to the end of the loop. drop out of the loop, popping the stack
-          sp = tempsp + sizeof(struct stack_for_frame);
+          mem.sp = mem.tempsp + sizeof(struct stack_for_frame);
           goto run_next_statement;
         }
       }
       // This is not the loop you are looking for... so Walk back up the stack
-      tempsp += sizeof(struct stack_for_frame);
+      mem.tempsp += sizeof(struct stack_for_frame);
       break;
     default:
       //printf("Stack is stuffed!\n");
@@ -1024,23 +694,23 @@ assignment:
     short int value;
     short int *var;
 
-    if(*txtpos < 'A' || *txtpos > 'Z')
+    if(*mem.txtpos < 'A' || *mem.txtpos > 'Z')
       goto qhow;
-    var = (short int *)variables_begin + *txtpos - 'A';
-    txtpos++;
+    var = (short int *)mem.variables_begin + *mem.txtpos - 'A';
+    mem.txtpos++;
 
-    ignore_blanks();
+    mem.ignore_blanks();
 
-    if (*txtpos != '=')
+    if (*mem.txtpos != '=')
       goto qwhat;
-    txtpos++;
-    ignore_blanks();
-    expression_error = 0;
-    value = expression();
-    if(expression_error)
+    mem.txtpos++;
+    mem.ignore_blanks();
+    mem.expression_error = 0;
+    value = mem.expression();
+    if(mem.expression_error)
       goto qwhat;
     // Check that we are at the end of the statement
-    if(*txtpos != NL && *txtpos != ':')
+    if(*mem.txtpos != NL && *mem.txtpos != ':')
       goto qwhat;
     *var = value;
   }
@@ -1051,85 +721,85 @@ poke:
     unsigned char *address;
 
     // Work out where to put it
-    expression_error = 0;
-    value = expression();
-    if(expression_error)
+    mem.expression_error = 0;
+    value = mem.expression();
+    if(mem.expression_error)
       goto qwhat;
     address = (unsigned char *)value;
 
     // check for a comma
-    ignore_blanks();
-    if (*txtpos != ',')
+    mem.ignore_blanks();
+    if (*mem.txtpos != ',')
       goto qwhat;
-    txtpos++;
-    ignore_blanks();
+    mem.txtpos++;
+    mem.ignore_blanks();
 
     // Now get the value to assign
-    expression_error = 0;
-    value = expression();
-    if(expression_error)
+    mem.expression_error = 0;
+    value = mem.expression();
+    if(mem.expression_error)
       goto qwhat;
     //printf("Poke %p value %i\n",address, (unsigned char)value);
     // Check that we are at the end of the statement
-    if(*txtpos != NL && *txtpos != ':')
+    if(*mem.txtpos != NL && *mem.txtpos != ':')
       goto qwhat;
   }
   goto run_next_statement;
 
 list:
-  linenum = testnum(); // Retuns 0 if no line found.
+  mem.linenum = mem.testnum(); // Retuns 0 if no line found.
 
   // Should be EOL
-  if(txtpos[0] != NL)
+  if(mem.txtpos[0] != NL)
     goto qwhat;
 
   // Find the line
-  list_line = findline();
-  while(list_line != program_end)
+  mem.list_line = mem.findline();
+  while(mem.list_line != mem.program_end)
     IO.printline();
   goto warmstart;
 
 print:
   // If we have an empty list then just put out a NL
-  if(*txtpos == ':' )
+  if(*mem.txtpos == ':' )
   {
     IO.line_terminator();
-    txtpos++;
+    mem.txtpos++;
     goto run_next_statement;
   }
-  if(*txtpos == NL)
+  if(*mem.txtpos == NL)
   {
     goto execnextline;
   }
 
   while(1)
   {
-    ignore_blanks();
+    mem.ignore_blanks();
     if(IO.print_quoted_string())
     {
       ;
     }
-    else if(*txtpos == '"' || *txtpos == '\'')
+    else if(*mem.txtpos == '"' || *mem.txtpos == '\'')
       goto qwhat;
     else
     {
       short int e;
-      expression_error = 0;
-      e = expression();
-      if(expression_error)
+      mem.expression_error = 0;
+      e = mem.expression();
+      if(mem.expression_error)
         goto qwhat;
       IO.printnum(e);
     }
 
     // At this point we have three options, a comma or a new line
-    if(*txtpos == ',')
-      txtpos++;	// Skip the comma and move onto the next
-    else if(txtpos[0] == ';' && (txtpos[1] == NL || txtpos[1] == ':'))
+    if(*mem.txtpos == ',')
+      mem.txtpos++;	// Skip the comma and move onto the next
+    else if(mem.txtpos[0] == ';' && (mem.txtpos[1] == NL || mem.txtpos[1] == ':'))
     {
-      txtpos++; // This has to be the end of the print - no newline
+      mem.txtpos++; // This has to be the end of the print - no newline
       break;
     }
-    else if(*txtpos == NL || *txtpos == ':')
+    else if(*mem.txtpos == NL || *mem.txtpos == ':')
     {
       IO.line_terminator();	// The end of the print statement
       break;
@@ -1141,7 +811,7 @@ print:
 
 mem:
   // memory free
-  IO.printnum(variables_begin-program_end);
+  IO.printnum(mem.variables_begin-mem.program_end);
   IO.printmsg(memorymsg);
 #ifdef ARDUINO
 #ifdef ENABLE_EEPROM
@@ -1176,24 +846,24 @@ dwrite:
     unsigned char *txtposBak;
 
     // Get the pin number
-    expression_error = 0;
-    pinNo = expression();
-    if(expression_error)
+    mem.expression_error = 0;
+    pinNo = mem.expression();
+    if(mem.expression_error)
       goto qwhat;
 
     // check for a comma
-    ignore_blanks();
-    if (*txtpos != ',')
+    mem.ignore_blanks();
+    if (*mem.txtpos != ',')
       goto qwhat;
-    txtpos++;
-    ignore_blanks();
+    mem.txtpos++;
+    mem.ignore_blanks();
 
 
-    txtposBak = txtpos; 
-    scantable(highlow_tab);
-    if(table_index != HIGHLOW_UNKNOWN)
+    txtposBak = mem.txtpos; 
+    mem.scantable(highlow_tab);
+    if(mem.table_index != HIGHLOW_UNKNOWN)
     {
-      if( table_index <= HIGHLOW_HIGH ) {
+      if( mem.table_index <= HIGHLOW_HIGH ) {
         value = 1;
       } 
       else {
@@ -1203,9 +873,9 @@ dwrite:
     else {
 
       // and the value (numerical)
-      expression_error = 0;
-      value = expression();
-      if(expression_error)
+      mem.expression_error = 0;
+      value = mem.expression();
+      if(mem.expression_error)
         goto qwhat;
     }
     pinMode( pinNo, OUTPUT );
@@ -1242,7 +912,7 @@ chain:
 
 load:
   // clear the program
-  program_end = program_start;
+  mem.program_end = mem.program_start;
 
   // load from a file into memory
 #ifdef ENABLE_FILEIO
@@ -1250,9 +920,9 @@ load:
     unsigned char *filename;
 
     // Work out the filename
-    expression_error = 0;
+    mem.expression_error = 0;
     filename = filenameWord();
-    if(expression_error)
+    if(mem.expression_error)
       goto qwhat;
 
 #ifdef ARDUINO
@@ -1287,9 +957,9 @@ save:
     unsigned char *filename;
 
     // Work out the filename
-    expression_error = 0;
+    mem.expression_error = 0;
     filename = filenameWord();
-    if(expression_error)
+    if(mem.expression_error)
       goto qwhat;
 
 #ifdef ARDUINO
@@ -1303,9 +973,9 @@ save:
     outStream = kStreamFile;
 
     // copied from "List"
-    list_line = findline();
-    while(list_line != program_end)
-      printline();
+    list_line = mem.findline();
+    while(mem.list_line != mem.program_end)
+      mem.printline();
 
     // go back to standard output, close the file
     outStream = kStreamSerial;
@@ -1325,9 +995,9 @@ rseed:
     short int value;
 
     //Get the pin number
-    expression_error = 0;
-    value = expression();
-    if(expression_error)
+    mem.expression_error = 0;
+    value = mem.expression();
+    if(mem.expression_error)
       goto qwhat;
 
 #ifdef ARDUINO
@@ -1351,22 +1021,22 @@ tonegen:
     short int duration;
 
     //Get the frequency
-    expression_error = 0;
-    freq = expression();
-    if(expression_error)
+    mem.expression_error = 0;
+    freq = mem.expression();
+    if(mem.expression_error)
       goto qwhat;
 
-    ignore_blanks();
-    if (*txtpos != ',')
+    mem.ignore_blanks();
+    if (*mem.txtpos != ',')
       goto qwhat;
-    txtpos++;
-    ignore_blanks();
+    mem.txtpos++;
+    mem.ignore_blanks();
 
 
     //Get the duration
-    expression_error = 0;
-    duration = expression();
-    if(expression_error)
+    mem.expression_error = 0;
+    duration = mem.expression();
+    if(mem.expression_error)
       goto qwhat;
 
     if( freq == 0 || duration == 0 )
@@ -1399,27 +1069,27 @@ static int isValidFnChar( char c )
 unsigned char * filenameWord(void)
 {
   // SDL - I wasn't sure if this functionality existed above, so I figured i'd put it here
-  unsigned char * ret = txtpos;
-  expression_error = 0;
+  unsigned char * ret = mem.txtpos;
+  mem.expression_error = 0;
 
   // make sure there are no quotes or spaces, search for valid characters
   //while(*txtpos == SPACE || *txtpos == TAB || *txtpos == SQUOTE || *txtpos == DQUOTE ) txtpos++;
-  while( !isValidFnChar( *txtpos )) txtpos++;
-  ret = txtpos;
+  while( !isValidFnChar( *mem.txtpos )) mem.txtpos++;
+  ret = mem.txtpos;
 
   if( *ret == '\0' ) {
-    expression_error = 1;
+    mem.expression_error = 1;
     return ret;
   }
 
   // now, find the next nonfnchar
-  txtpos++;
-  while( isValidFnChar( *txtpos )) txtpos++;
-  if( txtpos != ret ) *txtpos = '\0';
+  mem.txtpos++;
+  while( isValidFnChar( *mem.txtpos )) mem.txtpos++;
+  if( mem.txtpos != ret ) *mem.txtpos = '\0';
 
   // set the error code if we've got no string
   if( *ret == '\0' ) {
-    expression_error = 1;
+    mem.expression_error = 1;
   }
 
   return ret;
@@ -1455,7 +1125,7 @@ void setup()
   // read the first byte of the eeprom. if it's a number, assume it's a program we can load
   int val = EEPROM.read(0);
   if( val >= '0' && val <= '9' ) {
-    program_end = program_start;
+    mem.program_end = mem.program_start;
     IO.inStream = streamioClass::streamType::kStreamEEProm;
     eepos = 0;
     inhibitOutput = true;

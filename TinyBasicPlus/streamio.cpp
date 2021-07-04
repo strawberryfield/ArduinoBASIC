@@ -28,6 +28,7 @@
 /// See the GNU General Public License for more details.
 
 #include "streamio.h"
+#include "usermem.h"
 
 void streamioClass::printnum(int num)
 {
@@ -73,26 +74,26 @@ void streamioClass::printUnum(unsigned int num)
 unsigned char streamioClass::print_quoted_string(void)
 {
   int i=0;
-  unsigned char delim = *txtpos;
+  unsigned char delim = *mem.txtpos;
   if(delim != '"' && delim != '\'')
     return 0;
-  txtpos++;
+  mem.txtpos++;
 
   // Check we have a closing delimiter
-  while(txtpos[i] != delim)
+  while(mem.txtpos[i] != delim)
   {
-    if(txtpos[i] == NL)
+    if(mem.txtpos[i] == NL)
       return 0;
     i++;
   }
 
   // Print the characters
-  while(*txtpos != delim)
+  while(*mem.txtpos != delim)
   {
-    outchar(*txtpos);
-    txtpos++;
+    outchar(*mem.txtpos);
+    mem.txtpos++;
   }
-  txtpos++; // Skip over the last delimiter
+  mem.txtpos++; // Skip over the last delimiter
 
   return 1;
 }
@@ -113,7 +114,7 @@ void streamioClass::printmsg(const unsigned char *msg)
 void streamioClass::getln(char prompt)
 {
   outchar(prompt);
-  txtpos = program_end+sizeof(LINENUM);
+  mem.txtpos = mem.program_end+sizeof(LINENUM);
 
   while(1)
   {
@@ -125,23 +126,23 @@ void streamioClass::getln(char prompt)
     case CR:
       line_terminator();
       // Terminate all strings with a NL
-      txtpos[0] = NL;
+      mem.txtpos[0] = NL;
       return;
     case CTRLH:
-      if(txtpos == program_end)
+      if(mem.txtpos == mem.program_end)
         break;
-      txtpos--;
+      mem.txtpos--;
 
       printmsg(backspacemsg);
       break;
     default:
       // We need to leave at least one space to allow us to shuffle the line into order
-      if(txtpos == variables_begin-2)
+      if(mem.txtpos == mem.variables_begin-2)
         outchar(BELL);
       else
       {
-        txtpos[0] = c;
-        txtpos++;
+        mem.txtpos[0] = c;
+        mem.txtpos++;
         outchar(c);
       }
     }
@@ -152,22 +153,22 @@ void streamioClass::printline()
 {
   LINENUM line_num;
 
-  line_num = *((LINENUM *)(list_line));
-  list_line += sizeof(LINENUM) + sizeof(char);
+  line_num = *((LINENUM *)(mem.list_line));
+  mem.list_line += sizeof(LINENUM) + sizeof(char);
 
   // Output the line */
   printnum(line_num);
   outchar(' ');
-  while(*list_line != NL)
+  while(*mem.list_line != NL)
   {
-    outchar(*list_line);
-    list_line++;
+    outchar(*mem.list_line);
+    mem.list_line++;
   }
-  list_line++;
+  mem.list_line++;
 #ifdef ALIGN_MEMORY
   // Start looking for next line on even page
   if (ALIGN_UP(list_line) != list_line)
-    list_line++;
+    mem.list_line++;
 #endif
   line_terminator();
 }
@@ -269,15 +270,15 @@ void streamioClass::outchar(unsigned char c)
 
 void streamioClass::pushb(unsigned char b)
 {
-  sp--;
-  *sp = b;
+  mem.sp--;
+  *mem.sp = b;
 }
 
 unsigned char streamioClass::popb()
 {
   unsigned char b;
-  b = *sp;
-  sp++;
+  b = *mem.sp;
+  mem.sp++;
   return b;
 }
 
