@@ -1,3 +1,4 @@
+@echo off
 set "avr=C:\Program Files (x86)\Arduino\hardware\tools\avr\bin\"
 set "dump=%avr%avr-objdump"
 set build_dir=/projects/ArduinoBasic/bin

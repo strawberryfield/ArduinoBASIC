@@ -55,8 +55,8 @@
 // element on the specified pin.  Wire the red/positive/piezo to the kPiezoPin,
 // and the black/negative/metal disc to ground.
 // it adds 1.5k of usage as well.
-//#define ENABLE_TONES 1
-#undef ENABLE_TONES
+#define ENABLE_TONES 1
+//#undef ENABLE_TONES
 #define kPiezoPin 5
 
 // we can use the EEProm to store a program during powerdown.  This is 

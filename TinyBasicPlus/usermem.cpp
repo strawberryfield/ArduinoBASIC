@@ -31,305 +31,320 @@
 
 void usermemClass::ignore_blanks(void)
 {
-  while(*txtpos == SPACE || *txtpos == TAB)
-    txtpos++;
+    while (*txtpos == SPACE || *txtpos == TAB)
+        txtpos++;
 }
 
 void usermemClass::scantable(const unsigned char *table)
 {
-  int i = 0;
-  table_index = 0;
-  while(1)
-  {
-    // Run out of table entries?
-    if(pgm_read_byte( table ) == 0)
-      return;
-
-    // Do we match this character?
-    if(txtpos[i] == pgm_read_byte( table ))
+    int i = 0;
+    table_index = 0;
+    while (1)
     {
-      i++;
-      table++;
-    }
-    else
-    {
-      // do we match the last character of keywork (with 0x80 added)? If so, return
-      if(txtpos[i]+0x80 == pgm_read_byte( table ))
-      {
-        txtpos += i+1;  // Advance the pointer to following the keyword
-        ignore_blanks();
-        return;
-      }
+        // Run out of table entries?
+        if (pgm_read_byte(table) == 0)
+            return;
 
-      // Forward to the end of this keyword
-      while((pgm_read_byte( table ) & 0x80) == 0)
-        table++;
+        // Do we match this character?
+        if (txtpos[i] == pgm_read_byte(table))
+        {
+            i++;
+            table++;
+        }
+        else
+        {
+            // do we match the last character of keywork (with 0x80 added)? If so, return
+            if (txtpos[i] + 0x80 == pgm_read_byte(table))
+            {
+                txtpos += i + 1; // Advance the pointer to following the keyword
+                ignore_blanks();
+                return;
+            }
 
-      // Now move on to the first character of the next word, and reset the position index
-      table++;
-      table_index++;
-      ignore_blanks();
-      i = 0;
+            // Forward to the end of this keyword
+            while ((pgm_read_byte(table) & 0x80) == 0)
+                table++;
+
+            // Now move on to the first character of the next word, and reset the position index
+            table++;
+            table_index++;
+            ignore_blanks();
+            i = 0;
+        }
     }
-  }
 }
 
 unsigned short usermemClass::testnum(void)
 {
-  unsigned short num = 0;
-  ignore_blanks();
+    unsigned short num = 0;
+    ignore_blanks();
 
-  while(*txtpos>= '0' && *txtpos <= '9' )
-  {
-    // Trap overflows
-    if(num >= 0xFFFF/10)
+    while (*txtpos >= '0' && *txtpos <= '9')
     {
-      num = 0xFFFF;
-      break;
-    }
+        // Trap overflows
+        if (num >= 0xFFFF / 10)
+        {
+            num = 0xFFFF;
+            break;
+        }
 
-    num = num *10 + *txtpos - '0';
-    txtpos++;
-  }
-  return	num;
+        num = num * 10 + *txtpos - '0';
+        txtpos++;
+    }
+    return num;
 }
 
 unsigned char *usermemClass::findline(void)
 {
-  unsigned char *line = program_start;
-  while(1)
-  {
-    if(line == program_end)
-      return line;
+    unsigned char *line = program_start;
+    while (1)
+    {
+        if (line == program_end)
+            return line;
 
-    if(((LINENUM *)line)[0] >= linenum)
-      return line;
+        if (((LINENUM *)line)[0] >= linenum)
+            return line;
 
-    // Add the line length onto the current address, to get to the next line;
-    line += line[sizeof(LINENUM)];
-  }
+        // Add the line length onto the current address, to get to the next line;
+        line += line[sizeof(LINENUM)];
+    }
 }
 
 void usermemClass::toUppercaseBuffer(void)
 {
-  unsigned char *c = program_end+sizeof(LINENUM);
-  unsigned char quote = 0;
+    unsigned char *c = program_end + sizeof(LINENUM);
+    unsigned char quote = 0;
 
-  while(*c != NL)
-  {
-    // Are we in a quoted string?
-    if(*c == quote)
-      quote = 0;
-    else if(*c == '"' || *c == '\'')
-      quote = *c;
-    else if(quote == 0 && *c >= 'a' && *c <= 'z')
-      *c = *c + 'A' - 'a';
-    c++;
-  }
+    while (*c != NL)
+    {
+        // Are we in a quoted string?
+        if (*c == quote)
+            quote = 0;
+        else if (*c == '"' || *c == '\'')
+            quote = *c;
+        else if (quote == 0 && *c >= 'a' && *c <= 'z')
+            *c = *c + 'A' - 'a';
+        c++;
+    }
 }
 
 /************************************************************/
 
 short int usermemClass::expr4(void)
 {
-  // fix provided by Jurg Wullschleger wullschleger@gmail.com
-  // fixes whitespace and unary operations
-  ignore_blanks();
+    // fix provided by Jurg Wullschleger wullschleger@gmail.com
+    // fixes whitespace and unary operations
+    ignore_blanks();
 
-  if( *txtpos == '-' ) {
-    txtpos++;
-    return -expr4();
-  }
-  // end fix
-
-  if(*txtpos == '0')
-  {
-    txtpos++;
-    return 0;
-  }
-
-  if(*txtpos >= '1' && *txtpos <= '9')
-  {
-    short int a = 0;
-    do 	{
-      a = a*10 + *txtpos - '0';
-      txtpos++;
-    } 
-    while(*txtpos >= '0' && *txtpos <= '9');
-    return a;
-  }
-
-  // Is it a function or variable reference?
-  if(txtpos[0] >= 'A' && txtpos[0] <= 'Z')
-  {
-    short int a;
-    // Is it a variable reference (single alpha)
-    if(txtpos[1] < 'A' || txtpos[1] > 'Z')
+    if (*txtpos == '-')
     {
-      a = ((short int *)variables_begin)[*txtpos - 'A'];
-      txtpos++;
-      return a;
+        txtpos++;
+        return -expr4();
+    }
+    // end fix
+
+    if (*txtpos == '0')
+    {
+        txtpos++;
+        return 0;
     }
 
-    // Is it a function with a single parameter
-    scantable(func_tab);
-    if(table_index == FUNC_UNKNOWN)
-      goto expr4_error;
-
-    unsigned char f = table_index;
-
-    if(*txtpos != '(')
-      goto expr4_error;
-
-    txtpos++;
-    a = expression();
-    if(*txtpos != ')')
-      goto expr4_error;
-    txtpos++;
-    switch(f)
+    if (*txtpos >= '1' && *txtpos <= '9')
     {
-    case FUNC_PEEK:
-      return program[a];
-      
-    case FUNC_ABS:
-      if(a < 0) 
-        return -a;
-      return a;
+        short int a = 0;
+        do
+        {
+            a = a * 10 + *txtpos - '0';
+            txtpos++;
+        } while (*txtpos >= '0' && *txtpos <= '9');
+        return a;
+    }
+
+    // Is it a function or variable reference?
+    if (txtpos[0] >= 'A' && txtpos[0] <= 'Z')
+    {
+        short int a;
+        // Is it a variable reference (single alpha)
+        if (txtpos[1] < 'A' || txtpos[1] > 'Z')
+        {
+            a = ((short int *)variables_begin)[*txtpos - 'A'];
+            txtpos++;
+            return a;
+        }
+
+        // Is it a function with a single parameter
+        scantable(func_tab);
+        if (table_index == FUNC_UNKNOWN)
+        {
+            expression_error = 1;
+            return 0;
+        }
+
+        unsigned char f = table_index;
+
+        if (*txtpos != '(')
+        {
+            expression_error = 1;
+            return 0;
+        }
+
+        txtpos++;
+        a = expression();
+        if (*txtpos != ')')
+        {
+            expression_error = 1;
+            return 0;
+        }
+        txtpos++;
+        switch (f)
+        {
+        case FUNC_PEEK:
+            return program[a];
+
+        case FUNC_ABS:
+            if (a < 0)
+                return -a;
+            return a;
 
 #ifdef ARDUINO
-    case FUNC_AREAD:
-      pinMode( a, INPUT );
-      return analogRead( a );                        
-    case FUNC_DREAD:
-      pinMode( a, INPUT );
-      return digitalRead( a );
+        case FUNC_AREAD:
+            pinMode(a, INPUT);
+            return analogRead(a);
+        case FUNC_DREAD:
+            pinMode(a, INPUT);
+            return digitalRead(a);
 #endif
 
-    case FUNC_RND:
+        case FUNC_RND:
 #ifdef ARDUINO
-      return( random( a ));
+            return (random(a));
 #else
-      return( rand() % a );
+            return (rand() % a);
 #endif
+        }
     }
-  }
 
-  if(*txtpos == '(')
-  {
-    short int a;
-    txtpos++;
-    a = expression();
-    if(*txtpos != ')')
-      goto expr4_error;
+    if (*txtpos == '(')
+    {
+        short int a;
+        txtpos++;
+        a = expression();
+        if (*txtpos != ')')
+        {
+            expression_error = 1;
+            return 0;
+        }
 
-    txtpos++;
-    return a;
-  }
-
-expr4_error:
-  expression_error = 1;
-  return 0;
-
+        txtpos++;
+        return a;
+    }
 }
 
 short int usermemClass::expr3(void)
 {
-  short int a,b;
+    short int a, b;
 
-  a = expr4();
+    a = expr4();
 
-  ignore_blanks(); // fix for eg:  100 a = a + 1
+    ignore_blanks(); // fix for eg:  100 a = a + 1
 
-  while(1)
-  {
-    if(*txtpos == '*')
+    while (1)
     {
-      txtpos++;
-      b = expr4();
-      a *= b;
+        if (*txtpos == '*')
+        {
+            txtpos++;
+            b = expr4();
+            a *= b;
+        }
+        else if (*txtpos == '/')
+        {
+            txtpos++;
+            b = expr4();
+            if (b != 0)
+                a /= b;
+            else
+                expression_error = 1;
+        }
+        else
+            return a;
     }
-    else if(*txtpos == '/')
-    {
-      txtpos++;
-      b = expr4();
-      if(b != 0)
-        a /= b;
-      else
-        expression_error = 1;
-    }
-    else
-      return a;
-  }
 }
 
 short int usermemClass::expr2(void)
 {
-  short int a,b;
+    short int a, b;
 
-  if(*txtpos == '-' || *txtpos == '+')
-    a = 0;
-  else
-    a = expr3();
-
-  while(1)
-  {
-    if(*txtpos == '-')
-    {
-      txtpos++;
-      b = expr3();
-      a -= b;
-    }
-    else if(*txtpos == '+')
-    {
-      txtpos++;
-      b = expr3();
-      a += b;
-    }
+    if (*txtpos == '-' || *txtpos == '+')
+        a = 0;
     else
-      return a;
-  }
+        a = expr3();
+
+    while (1)
+    {
+        if (*txtpos == '-')
+        {
+            txtpos++;
+            b = expr3();
+            a -= b;
+        }
+        else if (*txtpos == '+')
+        {
+            txtpos++;
+            b = expr3();
+            a += b;
+        }
+        else
+            return a;
+    }
 }
 
 short int usermemClass::expression(void)
 {
-  short int a,b;
+    short int a, b;
+    expression_error = 0;
 
-  a = expr2();
+    a = expr2();
+    // Check if we have an error
+    if (expression_error)
+        return a;
 
-  // Check if we have an error
-  if(expression_error)	return a;
+    scantable(relop_tab);
+    if (table_index == RELOP_UNKNOWN)
+        return a;
 
-  scantable(relop_tab);
-  if(table_index == RELOP_UNKNOWN)
-    return a;
-
-  switch(table_index)
-  {
-  case RELOP_GE:
-    b = expr2();
-    if(a >= b) return 1;
-    break;
-  case RELOP_NE:
-  case RELOP_NE_BANG:
-    b = expr2();
-    if(a != b) return 1;
-    break;
-  case RELOP_GT:
-    b = expr2();
-    if(a > b) return 1;
-    break;
-  case RELOP_EQ:
-    b = expr2();
-    if(a == b) return 1;
-    break;
-  case RELOP_LE:
-    b = expr2();
-    if(a <= b) return 1;
-    break;
-  case RELOP_LT:
-    b = expr2();
-    if(a < b) return 1;
-    break;
-  }
-  return 0;
+    switch (table_index)
+    {
+    case RELOP_GE:
+        b = expr2();
+        if (a >= b)
+            return 1;
+        break;
+    case RELOP_NE:
+    case RELOP_NE_BANG:
+        b = expr2();
+        if (a != b)
+            return 1;
+        break;
+    case RELOP_GT:
+        b = expr2();
+        if (a > b)
+            return 1;
+        break;
+    case RELOP_EQ:
+        b = expr2();
+        if (a == b)
+            return 1;
+        break;
+    case RELOP_LE:
+        b = expr2();
+        if (a <= b)
+            return 1;
+        break;
+    case RELOP_LT:
+        b = expr2();
+        if (a < b)
+            return 1;
+        break;
+    }
+    return 0;
 }

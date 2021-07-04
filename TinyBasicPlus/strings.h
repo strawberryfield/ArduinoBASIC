@@ -37,7 +37,7 @@
 
 static const unsigned char okmsg[]            PROGMEM = "Ok.";
 static const unsigned char whatmsg[]          PROGMEM = "Syntax error: ";
-static const unsigned char howmsg[]           PROGMEM =	"Invalid expression: ";
+static const unsigned char howmsg[]           PROGMEM =	"Invalid expression.";
 static const unsigned char sorrymsg[]         PROGMEM = "Out of memory!";
 static const unsigned char initmsg[]          PROGMEM = " ** Casasoft Arduino BASIC " kVersion " **";
 static const unsigned char memorymsg[]        PROGMEM = " bytes free.";

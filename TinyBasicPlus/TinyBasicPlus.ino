@@ -83,8 +83,6 @@ static boolean inhibitOutput = false;
 static boolean runAfterLoad = false;
 static boolean triggerRun = false;
 
-static unsigned char breakcheck(void);
-/***************************************************************************/
 
 /***************************************************************************/
 void loop()
@@ -307,7 +305,7 @@ direct:
     goto prompt;
 
 interperateAtTxtpos:
-  if(breakcheck())
+  if(IO.breakcheck())
   {
     IO.printmsg(breakmsg);
     goto warmstart;
@@ -1137,23 +1135,6 @@ void setup()
 #endif /* ARDUINO */
 }
 
-
-/***********************************************************/
-static unsigned char breakcheck(void)
-{
-#ifdef ARDUINO
-  if(Serial.available())
-    return Serial.read() == CTRLC;
-  return 0;
-#else
-#ifdef __CONIO__
-  if(kbhit())
-    return getch() == CTRLC;
-  else
-#endif
-    return 0;
-#endif
-}
 
 /***********************************************************/
 /* SD Card helpers */

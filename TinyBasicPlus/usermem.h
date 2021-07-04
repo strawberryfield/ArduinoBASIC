@@ -39,6 +39,11 @@ typedef short unsigned LINENUM;
 
 class usermemClass
 {
+private:
+    short int expr4(void);
+    short int expr3(void);
+    short int expr2(void);
+
 public:
     unsigned char program[kRamSize];
     unsigned char *txtpos, *list_line, *tmptxtpos;
@@ -62,9 +67,6 @@ public:
     unsigned char *findline(void);
     void toUppercaseBuffer(void);
 
-    short int expr4(void);
-    short int expr3(void);
-    short int expr2(void);
     short int expression(void);
 };
 

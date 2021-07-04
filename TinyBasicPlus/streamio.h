@@ -62,6 +62,7 @@ public:
     void line_terminator(void);
     int inchar();
     void outchar(unsigned char c);
+    unsigned char breakcheck(void);
 };
 
 #endif

@@ -282,3 +282,18 @@ unsigned char streamioClass::popb()
   return b;
 }
 
+unsigned char streamioClass::breakcheck(void)
+{
+#ifdef ARDUINO
+  if(Serial.available())
+    return Serial.read() == CTRLC;
+  return 0;
+#else
+#ifdef __CONIO__
+  if(kbhit())
+    return getch() == CTRLC;
+  else
+#endif
+    return 0;
+#endif
+}
